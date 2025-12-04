@@ -1,8 +1,4 @@
 
-
-
-
-
 # ===== FILE: api/routes.py =====
 from flask import Blueprint, request, jsonify, send_file
 from io import BytesIO
