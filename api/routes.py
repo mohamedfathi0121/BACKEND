@@ -351,7 +351,7 @@ def print_students_legans_json():
         for row in rows:
             if not row.get('legan_id'):
                 continue
-            key = f"{row['Exam_id']}_{row['legan_id']}"
+            key = f"{row['exam_id']}_{row['legan_id']}"
             if key not in bucket:
                 bucket[key] = {
                     'exam_id': row['Exam_id'],
@@ -404,7 +404,7 @@ def print_students_legans_pdf():
         for row in rows:
             if not row.get('legan_id'):
                 continue
-            key = f"{row['Exam_id']}_{row['legan_id']}"
+            key = f"{row['exam_id']}_{row['legan_id']}"
             bucket.setdefault(key, {'legan_id': row['legan_id'], 'legan_name': row['legan_name'], 'room_name': row['room_name'], 'floor': row['floor'], 'capacity': row['capacity'], 'students': []})
             if row.get('student_ID'):
                 bucket[key]['students'].append({'id': row['student_ID'], 'name': row['student_name']})
