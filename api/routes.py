@@ -17,7 +17,8 @@ db = mysql.connector.connect(
     host="localhost",
     user="root",
     password="",
-    database="HNU-exam"
+    database="HNU-exam",
+    port=3309
 )
 
 UPLOAD_FOLDER = "uploads"
@@ -1207,6 +1208,300 @@ def assign_course(exam_id):
     finally:
         try: cur.close()
         except Exception: pass
+# -----------------------------Reassignment -----------------------------
+@api_routes.route("/api/v1/reassign/<int:exam_id>", methods=["POST"])
+def reassign_new_students(exam_id):
+    """
+    Reassign only NEWLY added students for a given exam.
+    - Continue filling from the last legan used (if it still has capacity).
+    - Keep students in the order they were added (no sorting).
+    """
+
+    cur = None
+    try:
+        cur = db.cursor(dictionary=True)
+
+        # 1) Get exam info
+        cur.execute("SELECT * FROM exam WHERE Exam_id=%s", (exam_id,))
+        exam = cur.fetchone()
+        if not exam:
+            return jsonify({"error": "Exam not found"}), 404
+
+        program = str(exam["program"]).upper()
+        level = str(exam["level"])
+        course = str(exam["code_course"])
+
+        # 2) Get legans (ordered ascending)
+        cur.execute("""
+            SELECT Legan_id, legan_name, room_id, level, capacity, program
+            FROM legan
+            WHERE program=%s AND level=%s
+            ORDER BY Legan_id ASC
+        """, (program, level))
+        legans = cur.fetchall()
+        if not legans:
+            return jsonify({"error": "No legans found for this program/level"}), 400
+
+        # 3) Get all registered students (⚠️ keep insertion order)
+        cur.execute("""
+            SELECT student_ID, student_name
+            FROM registration
+            WHERE program=%s AND course=%s
+        """, (program, course))
+        all_students = cur.fetchall()
+        if not all_students:
+            return jsonify({"error": "No students registered for this course"}), 400
+
+        # 4) Get already assigned student IDs
+        cur.execute("""
+            SELECT student_id, legan_id
+            FROM student_legan
+            WHERE Exam=%s
+        """, (exam_id,))
+        assigned = cur.fetchall()
+        assigned_ids = {row["student_id"] for row in assigned}
+
+        # 5) Filter new students (keep natural order)
+        new_students = [s for s in all_students if s["student_ID"] not in assigned_ids]
+        if not new_students:
+            return jsonify({"message": "✅ No new students found. All already assigned."}), 200
+
+        # 6) Find the last legan used in this exam
+        cur.execute("""
+            SELECT legan_id
+            FROM student_legan
+            WHERE Exam=%s
+            ORDER BY student_Legan_id DESC
+            LIMIT 1
+        """, (exam_id,))
+        last_used = cur.fetchone()
+        last_used_id = last_used["legan_id"] if last_used else None
+
+        # 7) Find index of that legan
+        start_index = 0
+        if last_used_id:
+            for i, leg in enumerate(legans):
+                if leg["Legan_id"] == last_used_id:
+                    start_index = i
+                    break
+
+        ins_map = db.cursor()
+        history = db.cursor()
+        inserted = 0
+        idx = 0
+        total_new = len(new_students)
+
+        # Fill from last used legan forward
+        for i in range(start_index, len(legans)):
+            leg = legans[i]
+            cap = int(leg["capacity"] or 0)
+            cur.execute("SELECT COUNT(*) AS c FROM student_legan WHERE legan_id=%s AND Exam=%s", (leg["Legan_id"], exam_id))
+            used = cur.fetchone()["c"]
+            free = max(0, cap - used)
+
+            for _ in range(free):
+                if idx >= total_new:
+                    break
+                s = new_students[idx]
+                idx += 1
+
+                ins_map.execute("""
+                    INSERT INTO student_legan (legan_id, student_id, Exam)
+                    VALUES (%s,%s,%s)
+                """, (leg["Legan_id"], s["student_ID"], exam_id))
+                history.execute("""
+                    INSERT INTO student_legan_history (legan_id, student_id, exam_id, action)
+                    VALUES (%s,%s,%s,'REASSIGNED')
+                """, (leg["Legan_id"], s["student_ID"], exam_id))
+                inserted += 1
+
+            if idx >= total_new:
+                break
+
+        # If students remain, wrap to earlier legans
+        if idx < total_new:
+            for i in range(0, start_index):
+                leg = legans[i]
+                cap = int(leg["capacity"] or 0)
+                cur.execute("SELECT COUNT(*) AS c FROM student_legan WHERE legan_id=%s AND Exam=%s", (leg["Legan_id"], exam_id))
+                used = cur.fetchone()["c"]
+                free = max(0, cap - used)
+
+                for _ in range(free):
+                    if idx >= total_new:
+                        break
+                    s = new_students[idx]
+                    idx += 1
+
+                    ins_map.execute("""
+                        INSERT INTO student_legan (legan_id, student_id, Exam)
+                        VALUES (%s,%s,%s)
+                    """, (leg["Legan_id"], s["student_ID"], exam_id))
+                    history.execute("""
+                        INSERT INTO student_legan_history (legan_id, student_id, exam_id, action)
+                        VALUES (%s,%s,%s,'REASSIGNED')
+                    """, (leg["Legan_id"], s["student_ID"], exam_id))
+                    inserted += 1
+
+                if idx >= total_new:
+                    break
+
+        db.commit()
+        ins_map.close()
+        history.close()
+
+        return jsonify({
+            "message": f"🔄 Reassigned {inserted}/{total_new} new students (kept insertion order).",
+            "new_assigned": inserted,
+            "new_total": total_new,
+            "started_from_legan": last_used_id or legans[0]["Legan_id"]
+        }), 200
+
+    except Exception as e:
+        if db.is_connected() and cur:
+            db.rollback()
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+    finally:
+        try:
+            cur.close()
+        except Exception:
+            pass
+
+# @api_routes.route("/api/v1/reassign/<int:exam_id>", methods=["POST"])
+# def reassign_new_students(exam_id):
+#     """
+#     Reassign only NEWLY added students for a given exam.
+#     Continue filling from the last legan used in previous assignment/reassignment,
+#     if it still has remaining capacity.
+#     """
+
+#     cur = None
+#     try:
+#         cur = db.cursor(dictionary=True)
+
+#         # 1) Get exam info
+#         cur.execute("SELECT * FROM exam WHERE Exam_id=%s", (exam_id,))
+#         exam = cur.fetchone()
+#         if not exam:
+#             return jsonify({"error": "Exam not found"}), 404
+
+#         program = str(exam["program"]).upper()
+#         level = str(exam["level"])
+#         course = str(exam["code_course"])
+
+#         # 2) Get legans
+#         cur.execute("""
+#             SELECT Legan_id, legan_name, room_id, level, capacity, program
+#             FROM legan
+#             WHERE program=%s AND level=%s
+#             ORDER BY Legan_id ASC
+#         """, (program, level))
+#         legans = cur.fetchall()
+#         if not legans:
+#             return jsonify({"error": "No legans found for this program/level"}), 400
+
+#         # 3) Get all registered students
+#         cur.execute("""
+#             SELECT student_ID, student_name
+#             FROM registration
+#             WHERE program=%s AND course=%s
+#             ORDER BY student_ID
+#         """, (program, course))
+#         all_students = cur.fetchall()
+#         if not all_students:
+#             return jsonify({"error": "No students registered for this course"}), 400
+
+#         # 4) Get already assigned student IDs
+#         cur.execute("""
+#             SELECT student_id, legan_id
+#             FROM student_legan
+#             WHERE Exam=%s
+#         """, (exam_id,))
+#         assigned = cur.fetchall()
+#         assigned_ids = {row["student_id"] for row in assigned}
+
+#         # 5) Filter new students
+#         new_students = [s for s in all_students if s["student_ID"] not in assigned_ids]
+#         if not new_students:
+#             return jsonify({"message": "✅ No new students found. All already assigned."}), 200
+
+#         # 6) Find last used legan
+#         cur.execute("""
+#             SELECT legan_id
+#             FROM student_legan
+#             WHERE Exam=%s
+#             ORDER BY legan_id DESC
+#             LIMIT 1
+#         """, (exam_id,))
+#         last_used = cur.fetchone()
+#         last_used_id = last_used["legan_id"] if last_used else None
+
+#         # Determine starting index in legan list
+#         start_index = 0
+#         if last_used_id:
+#             for i, leg in enumerate(legans):
+#                 if leg["Legan_id"] == last_used_id:
+#                     start_index = i
+#                     break
+
+#         # 7) Prepare for insertion
+#         ins_map = db.cursor()
+#         history = db.cursor()
+#         inserted = 0
+#         idx = 0
+#         total_new = len(new_students)
+
+#         # Rotate legans list to start from last used one
+#         ordered_legans = legans[start_index:] + legans[:start_index]
+
+#         for leg in ordered_legans:
+#             cap = int(leg["capacity"] or 0)
+#             cur.execute("SELECT COUNT(*) AS c FROM student_legan WHERE legan_id=%s AND Exam=%s", (leg["Legan_id"], exam_id))
+#             used = cur.fetchone()["c"]
+#             free = max(0, cap - used)
+
+#             for _ in range(free):
+#                 if idx >= total_new:
+#                     break
+#                 s = new_students[idx]
+#                 idx += 1
+
+#                 ins_map.execute("""
+#                     INSERT INTO student_legan (legan_id, student_id, Exam)
+#                     VALUES (%s,%s,%s)
+#                 """, (leg["Legan_id"], s["student_ID"], exam_id))
+#                 history.execute("""
+#                     INSERT INTO student_legan_history (legan_id, student_id, exam_id, action)
+#                     VALUES (%s,%s,%s,'REASSIGNED')
+#                 """, (leg["Legan_id"], s["student_ID"], exam_id))
+#                 inserted += 1
+
+#             if idx >= total_new:
+#                 break
+
+#         db.commit()
+#         ins_map.close()
+#         history.close()
+
+#         return jsonify({
+#             "message": f"🔄 Reassigned {inserted}/{total_new} new students, starting from legan {last_used_id or legans[0]['Legan_id']}.",
+#             "new_assigned": inserted,
+#             "new_total": total_new
+#         }), 200
+
+#     except Exception as e:
+#         if db.is_connected() and cur:
+#             db.rollback()
+#         traceback.print_exc()
+#         return jsonify({"error": str(e)}), 500
+
+#     finally:
+#         try:
+#             cur.close()
+#         except Exception:
+#             pass
 
 
 # ----------------------------- UNASSIGNMENT -----------------------------
@@ -1377,6 +1672,130 @@ def print_students_legans_json():
     finally:
         try: cur.close()
         except Exception: pass
+
+# -------------------------------------all day legans ---------------------------------
+@api_routes.route("/api/v1/students-legans/print/day", methods=["GET"])
+def print_students_legans_by_day():
+    """
+    Print all legans for a specific day across all programs,
+    ordered by Program → Level → Period.
+    Example: /api/v1/students-legans/print/day?day=saturday
+    """
+    cur = None
+    try:
+        day = request.args.get("day")
+        if not day:
+            return jsonify({"error": "Missing day parameter"}), 400
+
+        # ✅ Ensure MySQL connection is alive before using it
+        if not db.is_connected():
+            try:
+                db.reconnect(attempts=3, delay=2)
+                print("🔄 MySQL reconnected successfully")
+            except Exception as e:
+                print("❌ MySQL reconnect failed:", e)
+                return jsonify({"error": "Database reconnection failed"}), 500
+
+        cur = db.cursor(dictionary=True)
+
+        sql = f"""
+            SELECT
+              e.Exam_id, e.year, e.program AS program_id, e.level AS exam_level,
+              e.code_course AS course, e.day, e.period_id, e.date, e.type,
+              l.legan_id, l.legan_name, l.capacity,
+              r.room_name, r.floor AS floor,
+              p.logo AS program_logo,
+              p.arabic_name AS program_arabic_name,
+              p.English_name AS program_english_name,
+              sl.student_legan_id, s.student_ID, s.student_name, s.payment, s.level
+            FROM exam e
+            LEFT JOIN student_legan sl ON sl.Exam=e.Exam_id
+            LEFT JOIN legan l ON l.legan_id=sl.legan_id
+            LEFT JOIN rooms r ON r.room_id=l.room_id
+            LEFT JOIN programs p ON p.program_id=e.program
+            LEFT JOIN registration s ON s.student_ID=sl.student_id
+            WHERE LOWER(e.day) = LOWER(%s)
+            ORDER BY
+              FIELD(e.program, 'BIDT', 'BIAS', 'DEE', 'LSC'),
+              CAST(SUBSTRING(e.level, 7) AS UNSIGNED),  -- handles "level 1", "level 2", etc.
+              {PERIOD_MINUTES_SQL},
+              l.legan_id, s.student_ID
+        """
+
+        cur.execute(sql, (day,))
+        rows = cur.fetchall()
+
+        # -------- Group data --------
+        bucket = {}
+        for row in rows:
+            if not row["legan_id"]:
+                continue
+
+            key = f"{row['program_id']}_{row['exam_level']}_{row['period_id']}_{row['legan_id']}"
+
+            if key not in bucket:
+                bucket[key] = {
+                    "program": row["program_id"],
+                    "program_arabic_name": row["program_arabic_name"],
+                    "program_english_name": row["program_english_name"],
+                    "program_logo": row["program_logo"],
+                    "level": row["exam_level"],
+                    "course": row["course"],
+                    "day": row["day"],
+                    "period_id": row["period_id"],
+                    "date": row["date"],
+                    "legan_id": row["legan_id"],
+                    "legan_name": row["legan_name"],
+                    "room_name": row["room_name"],
+                    "floor": row["floor"],
+                    "capacity": row["capacity"],
+                    "students": []
+                }
+
+            if row["student_ID"]:
+                students = bucket[key]["students"]
+                if not any(s["student_legan_id"] == row["student_legan_id"] for s in students):
+                    students.append({
+                        "student_legan_id": row["student_legan_id"],
+                        "student_id": row["student_ID"],
+                        "student_name": row["student_name"],
+                        "payment": row["payment"],
+                        "level": row["level"],
+                    })
+
+        # Convert to structured data: Program → Level → Period → Legans
+        programs = {}
+        for legan in bucket.values():
+            prog = legan["program"]
+            lvl = legan["level"]
+            prd = legan["period_id"]
+
+            programs.setdefault(prog, {})
+            programs[prog].setdefault(lvl, {})
+            programs[prog][lvl].setdefault(prd, [])
+            programs[prog][lvl][prd].append(legan)
+
+        return jsonify({
+            "day": day,
+            "year": (rows[0]["year"] if rows else None),
+            "programs": programs
+        }), 200
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+    finally:
+        try:
+            if cur:
+                cur.close()
+        except Exception:
+            pass
+
+        
+        
+    # ----------------------------- PRINT PDF -----------------------------
+
 
 @api_routes.route("/api/v1/students-legans/print/pdf", methods=["GET"])
 def print_students_legans_pdf():
