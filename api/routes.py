@@ -15,7 +15,19 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 # Day ordering as CASE
 DAY_ORDER_CASE = "CASE e.day WHEN 'Saturday' THEN 1 WHEN 'Sunday' THEN 2 WHEN 'Monday' THEN 3 WHEN 'Tuesday' THEN 4 WHEN 'Wednesday' THEN 5 WHEN 'Thursday' THEN 6 WHEN 'Friday' THEN 7 END"
 
-PERIOD_MINUTES_SQL_PG = "(( (CASE WHEN CAST(split_part(split_part(e.period_id, '-', 1), ':', 1) AS INTEGER) BETWEEN 1 AND 7 THEN CAST(split_part(split_part(e.period_id, '-', 1), ':', 1) AS INTEGER) + 12 ELSE CAST(split_part(split_part(e.period_id, '-', 1), ':', 1) AS INTEGER) END) * 60) + CAST(split_part(split_part(e.period_id, '-', 1), ':', 2) AS INTEGER) ))"
+PERIOD_MINUTES_SQL_PG = """
+(
+    (
+        CASE
+            WHEN CAST(split_part(split_part(e.period_id, '-', 1), ':', 1) AS INTEGER) BETWEEN 1 AND 7
+                THEN CAST(split_part(split_part(e.period_id, '-', 1), ':', 1) AS INTEGER) + 12
+            ELSE CAST(split_part(split_part(e.period_id, '-', 1), ':', 1) AS INTEGER)
+        END
+    ) * 60
+    +
+    CAST(split_part(split_part(e.period_id, '-', 1), ':', 2) AS INTEGER)
+)
+"""
 
 # --------- helper to build filters ----------
 def build_filters(prefix='e'):
