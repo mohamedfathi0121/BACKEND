@@ -138,7 +138,7 @@ def get_all_students_legans():
         print("ROWS:", rows)
         grouped = {}
         for row in rows:
-            eid = row['Exam_id']
+            eid = row['exam_id']
             if eid not in grouped:
                 grouped[eid] = {
                     'Exam_id': eid,
