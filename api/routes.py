@@ -124,7 +124,7 @@ def get_all_students_legans():
                e.date, e.day, e.level, e.period_id, e.assigned,
                l.Legan_id AS legan_id, l.legan_name, l.capacity AS legan_capacity, r.room_name
         FROM exam e
-        LEFT JOIN student_legan sl ON sl.Exam = e.Exam_id
+        LEFT JOIN student_legan sl ON sl."Exam_id" = e.Exam_id
         LEFT JOIN legan l ON l.Legan_id = sl.legan_id
         LEFT JOIN rooms r ON r.room_id = l.room_id
         {where_sql}
@@ -333,7 +333,7 @@ def print_students_legans_json():
               p.English_name AS program_english_name,
               sl.student_legan_id, s.student_ID, s.student_name,s.payment,s.level
             FROM exam e
-            LEFT JOIN student_legan sl ON sl.Exam=e.Exam_id
+            LEFT JOIN student_legan sl ON sl."Exam_id" = e.Exam_id
             LEFT JOIN legan l ON l.Legan_id=sl.legan_id
             LEFT JOIN rooms r ON r.room_id=l.room_id
             LEFT JOIN programs p ON p.program_id=e.program
@@ -387,7 +387,7 @@ def print_students_legans_pdf():
                    r.room_name, r.floor AS floor,
                    sl.student_legan_id, s.student_ID, s.student_name
             FROM exam e
-            LEFT JOIN student_legan sl ON sl.Exam=e.Exam_id
+    LEFT JOIN student_legan sl ON sl."Exam_id" = e.Exam_id
             LEFT JOIN legan l ON l.Legan_id=sl.legan_id
             LEFT JOIN rooms r ON r.room_id=l.room_id
             LEFT JOIN registration s ON s.student_ID=sl.student_id
