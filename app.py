@@ -9,7 +9,7 @@ CORS(app, resources={
     r"/api/*": {
         "origins": [
             "http://localhost:5173",
-            "https://69318f474e4b9914a4013048--hnu-unerversity.netlify.app"
+            "https://hnu-unerversity.netlify.app"
         ]
     }
 })
