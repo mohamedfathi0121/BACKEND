@@ -130,7 +130,12 @@ def get_all_students_legans():
         {where_sql}
         ORDER BY {DAY_ORDER_CASE}, {PERIOD_MINUTES_SQL_PG}, e.Exam_id
         """
+        print("\n========== SQL DEBUG ==========")
+        print(sql)
+        print("PARAMS:", params)
+        print("================================\n")
         rows = dbmod.fetchall(sql, params)
+        print("ROWS:", rows)
         grouped = {}
         for row in rows:
             eid = row['Exam_id']
