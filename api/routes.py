@@ -9,17 +9,22 @@ import mysql.connector
 from werkzeug.utils import secure_filename
 from fpdf import FPDF  # pip install fpdf
 import traceback
+import psycopg2
+
 
 # -----------------------------
 # DB connection
 # -----------------------------
-db = mysql.connector.connect(
-    host="localhost",
-    user="root",
-    password="",
-    database="HNU-exam",
-    port=3309
-)
+# db = mysql.connector.connect(
+#     host="localhost",
+#     user="root",
+#     password="",
+#     database="HNU-exam",
+#     port=3309
+# )
+DATABASE_URL = os.getenv("DATABASE_URL")  # Render provides this
+conn = psycopg2.connect(DATABASE_URL, sslmode="require")
+
 
 UPLOAD_FOLDER = "uploads"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
